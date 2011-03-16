@@ -1,6 +1,7 @@
 #!/usr/bin/env perl
 
 use Modern::Perl;
+use Carp::Always;
 use DBIx::NoSQLite;
 use App::SimpleDispatch;
 use Path::Class;
@@ -9,29 +10,56 @@ use Getopt::Usaginator <<_END_;
     Usage: burnmix ...
 
 _END_
+use Digest::SHA1 qw/ sha1_hex /;
 
 my $store = DBIx::NoSQLite->connect( file 'burnmix.sqlite' );
+$store->model( 'Song' )->index( $_ ) for qw/ artist album title name loved /;
+
 my @arguments = @ARGV;
 
 usage unless @arguments;
 
 given( $arguments[ 0 ] ) {
     when ( 'load' ) {
-        while (<STDIN>) {
-            chomp;
-            next unless -f $_;
-            next unless m/\.aac$/;
-            my $file = file $_;
-            my $depth = $file->dir->dir_list;
-            my ( $loved );
-            given ( $depth ) {
-                when( 1 )   { $loved = 1 }
-                when( 2 )   {}
-                default     { next }
+        my %loved;
+        $store->transact( sub{
+
+            while (<STDIN>) {
+                chomp;
+                next unless -f $_;
+                next unless m/\.aac$/;
+                my $file = file $_;
+                next if $file->basename =~ m/^\./;
+                my $depth = $file->dir->dir_list;
+                my ( $loved );
+                given ( $depth ) {
+                    when( 1 )   { $loved = 1 }
+                    when( 2 )   {}
+                    default     { next }
+                }
+                my $song = $file->basename;
+                my @song = split m/-/, $song;
+
+                my $sha1 = sha1_hex $file;
+                $loved = $loved{ $sha1 } ||= $loved;
+
+                print "$file ($depth) ($sha1)";
+                say $loved ? ' <3' : '';
+
+                my ( $artist, $album, $title );
+                ( $artist, $album, $title ) = @song if 3 == @song;
+
+                $store->set( Song => $sha1 => {
+                        file => "$file",
+                        sha1 => $sha1,
+                        loved => $loved,
+                        title => $title,
+                        album => $album,
+                        artist => $artist,
+                        name => $file->basename,
+                } );
             }
-            print "$file ($depth)";
-            say $loved ? ' <3' : '';
-        }
+        } );
     }
 
     default {
