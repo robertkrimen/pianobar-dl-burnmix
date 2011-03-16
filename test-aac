@@ -1,0 +1,16 @@
+#!/usr/bin/env perl
+
+use Modern::Perl;
+
+my $argument = my $file = shift @ARGV or die "*** Missing file";
+$argument =~ s/([^\w])/\\$1/g;
+
+my $test = `faad -o /dev/null $argument 2>&1`;
+
+if ( $test =~ m/\QDecoding $file took:\E/ ) {
+    exit 0;
+}
+else {
+    exit 64;
+}
+
