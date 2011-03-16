@@ -13,7 +13,7 @@ _END_
 use Digest::SHA1 qw/ sha1_hex /;
 
 my $store = DBIx::NoSQLite->connect( file 'burnmix.sqlite' );
-$store->model( 'Song' )->index( $_ ) for qw/ artist album title name loved /;
+$store->model( 'Song' )->index( $_ ) for qw/ artist album title name loved station /;
 
 my @arguments = @ARGV;
 
@@ -30,7 +30,9 @@ given( $arguments[ 0 ] ) {
                 next unless m/\.aac$/;
                 my $file = file $_;
                 next if $file->basename =~ m/^\./;
-                my $depth = $file->dir->dir_list;
+                my @path = $file->dir->dir_list;
+                my $depth = @path;
+                my $station = $path[ 0 ];
                 my ( $loved );
                 given ( $depth ) {
                     when( 1 )   { $loved = 1 }
@@ -49,14 +51,15 @@ given( $arguments[ 0 ] ) {
                 my ( $artist, $album, $title );
                 ( $artist, $album, $title ) = @song if 3 == @song;
 
-                $store->set( Song => $sha1 => {
-                        file => "$file",
-                        sha1 => $sha1,
-                        loved => $loved,
-                        title => $title,
-                        album => $album,
-                        artist => $artist,
-                        name => $file->basename,
+                $store->set( Song => "$station/$sha1" => {
+                    station => $station,
+                    file => "$file",
+                    sha1 => $sha1,
+                    loved => $loved,
+                    title => $title,
+                    album => $album,
+                    artist => $artist,
+                    name => $file->basename,
                 } );
             }
         } );
