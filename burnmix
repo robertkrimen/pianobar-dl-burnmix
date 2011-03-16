@@ -179,6 +179,7 @@ _END_
             system( "faad -o $wav $aac" );
             $count += 1;
         }
+        say "# cdrecord dev=1,0,0 -eject speed=48 -pad -audio $dir/*.wav";
     }
 
     default {
