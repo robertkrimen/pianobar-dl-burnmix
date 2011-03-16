@@ -1,0 +1,43 @@
+#!/usr/bin/env perl
+
+use Modern::Perl;
+use DBIx::NoSQLite;
+use App::SimpleDispatch;
+use Path::Class;
+use Getopt::Usaginator <<_END_;
+
+    Usage: burnmix ...
+
+_END_
+
+my $store = DBIx::NoSQLite->connect( file 'burnmix.sqlite' );
+my @arguments = @ARGV;
+
+usage unless @arguments;
+
+given( $arguments[ 0 ] ) {
+    when ( 'load' ) {
+        while (<STDIN>) {
+            chomp;
+            next unless -f $_;
+            next unless m/\.aac$/;
+            my $file = file $_;
+            my $depth = $file->dir->dir_list;
+            my ( $loved );
+            given ( $depth ) {
+                when( 1 )   { $loved = 1 }
+                when( 2 )   {}
+                default     { next }
+            }
+            print "$file ($depth)";
+            say $loved ? ' <3' : '';
+        }
+    }
+
+    default {
+        usage "*** Invalid arguments: @ARGV";
+    }
+}
+
+
+1;
