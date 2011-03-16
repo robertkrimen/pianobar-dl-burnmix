@@ -1,7 +1,7 @@
 #!/usr/bin/env perl
 
 use Modern::Perl;
-use Carp::Always;
+#use Carp::Always;
 use DBIx::NoSQLite;
 use App::SimpleDispatch;
 use Path::Class;
@@ -11,15 +11,24 @@ use Getopt::Usaginator <<_END_;
 
 _END_
 use Digest::SHA1 qw/ sha1_hex /;
+use DBIx::Simple;
+use Data::UUID::LibUUID;
+use Algorithm::Numerical::Shuffle qw / shuffle /;
 
 my $store = DBIx::NoSQLite->connect( file 'burnmix.sqlite' );
 $store->model( 'Song' )->index( $_ ) for qw/ artist album title name loved station /;
+$store->model( 'Disc' )->index( $_ ) for qw/ station song disc_uuid disc_name /;
+$store->model( $_ )->index->redeploy for qw/ Song Disc /;
+
+my $db = DBIx::Simple->connect( $store->dbh );
 
 my @arguments = @ARGV;
 
 usage unless @arguments;
 
-given( $arguments[ 0 ] ) {
+my $argument0 = shift @arguments;
+given( $argument0 ) {
+
     when ( 'load' ) {
         my %loved;
         $store->transact( sub{
@@ -50,8 +59,10 @@ given( $arguments[ 0 ] ) {
 
                 my ( $artist, $album, $title );
                 ( $artist, $album, $title ) = @song if 3 == @song;
+                my $key = "$station/$sha1";
 
-                $store->set( Song => "$station/$sha1" => {
+                $store->set( Song => $key => {
+                    key => $key,
                     station => $station,
                     file => "$file",
                     sha1 => $sha1,
@@ -63,6 +74,111 @@ given( $arguments[ 0 ] ) {
                 } );
             }
         } );
+    }
+
+    when ( "pick" ) {
+        usage "*** Missing station" unless @arguments;
+
+        my $station = shift @arguments;
+
+        my @available = $db->query( <<_END_, $station, $station )->hashes;
+SELECT * FROM Song
+WHERE station = ? AND Song.key NOT IN ( SELECT song FROM Disc WHERE station = ? )
+ORDER BY loved DESC
+_END_
+
+        say "> ", scalar @available, " available";
+
+        my ( @loved, @unloved );
+        for my $song ( @available ) {
+            if ( $song->{ loved } ) { push @loved, $song }
+            else                    { push @unloved, $song }
+        }
+
+        shuffle $_ for \@loved, \@unloved;
+
+        my @disc;
+        my $total = 0;
+        while ( 1 ) {
+            my $song = shift @loved || shift @unloved or last;
+            $song = $store->get( Song => $song->{ key } ) or die;
+            my $file = $song->{ file };
+            $file =~ s/([^\w])/\\$1/g;
+            my $faad_output = `faad -i $file 2>&1`;
+            my ( $length ) = $faad_output =~ m/([\d\.]+)\s+secs/;
+            if ( ! $length ) {
+                say STDERR "*** Missing length for $file";
+                say STDERR $faad_output;
+                exit 64;
+            }
+            last if $total + $length > 4320;
+            $total += $length;
+            $song->{ length } = $length;
+            push @disc, $song;
+        }
+
+        say $_->{ name }, $_->{ loved } ? ' <3' : '', " $_->{ length }" for @disc;
+        say $total;
+
+        my %disc;
+        $disc{ disc_name } = $disc{ disc_uuid } = lc new_uuid_string;
+
+        my $rank = 0;
+        for my $song ( @disc ) {
+            $store->set( Disc => $song->{ key } => {
+                %disc,
+                song => $song->{ key },
+                station => $station,
+                rank => $rank,
+            } );
+            $rank += 1;
+        }
+
+        #{
+        #    use File::Temp qw/ tempdir /;
+        #    my $dir = dir tempdir( './.burn.XXXXXX', unlink => 0 );
+		#    my $count = 0;
+        #    for my $song ( @disc ) {
+        #        $song = $store->get( Song => $song->{ key } );
+        #        my $aac = $song->{ file };
+        #        $aac =~ s/([^\w])/\\$1/g;
+        #        my $wav = $dir->file( sprintf "%02d.wav", $count );
+        #        system( "faad -o $wav $aac" );
+        #        $count += 1;
+        #    }
+        #}
+    }
+
+    when ( "list" ) {
+        my @disc = $db->query( <<_END_ )->hashes;
+SELECT DISTINCT disc_name, disc_uuid, station FROM disc 
+_END_
+        for my $disc ( @disc ) {
+            say $disc->{ disc_uuid }, ' ', $disc->{ station };
+        }
+    }
+
+    when ( "prepare" ) {
+        usage "*** Missing uuid" unless @arguments;
+        my $query = shift @arguments;
+        my @disc = $store->search( Disc => { disc_uuid => { -like => "$query%" } } )->all;
+        my %found;
+        $found{ $_->{ disc_uuid } } += 1 for @disc;
+        die "*** Invalid query ($query): Not specific enough" if keys %found > 1;
+        for my $song ( @disc ) {
+            say $song->{ song };
+        }
+        my $dir = dir ".burn." . ( keys %found )[0];
+        $dir->mkpath;
+        my $count = 0;
+        for my $song ( @disc ) {
+            $song = $store->get( Song => $song->{ song } );
+            my $aac = $song->{ file };
+            $aac =~ s/([^\w])/\\$1/g;
+            my $wav = $dir->file( sprintf "%02d.wav", $count );
+            system( "faad -o $wav $aac" );
+            $count += 1;
+        }
     }
 
     default {
