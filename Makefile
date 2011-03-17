@@ -1,6 +1,8 @@
-.PHONY: load clean
+.PHONY: all fresh clean
 
-load:
+all:
+
+fresh:
 	rm -f burnmix.sqlite
 	find . | ./burnmix load
 
