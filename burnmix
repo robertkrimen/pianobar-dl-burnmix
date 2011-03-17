@@ -182,6 +182,15 @@ _END_
         say "# sudo cdrecord dev=1,0,0 -eject -pad -audio $dir/*.wav";
     }
 
+    when ( "burn" ) {
+        usage "*** Missing burn directory" unless @arguments;
+
+        my $dir = shift @arguments;
+        die "*** Invalid directory ($dir)" unless -d $dir;
+
+        system( "sudo cdrecord dev=1,0,0 -eject -pad -audio $dir/*.wav @arguments" );
+    }
+
     default {
         usage "*** Invalid arguments: @ARGV";
     }
